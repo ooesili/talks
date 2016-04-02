@@ -1,0 +1,326 @@
+Code Generation
+Augmenting existing code with generated code
+19 Mar 2016
+
+Wesley Merkel
+Software Engineer, Allstate
+@ooesili
+
+
+* What? Why?
+
+* What?
+
+A program that can perform code generation is a program whose output is source code.
+
+
+* Why?
+
+Consider using code generation you are:
+
+- writing boilerplate that must be written
+- type asserting on empty interfaces more than you'd like
+- thinking about using the `reflect` package
+- wishing go had generics
+
+
+* Outputting code
+
+* Using fmt
+
+You can get pretty far just using `Printf`
+
+.play printf/printf.go /START OMIT$/,/END OMIT$/
+
+
+* Using text/template
+
+Templates can help with more complex output
+
+.play template/template.go /START OMIT$/,/END OMIT$/
+
+
+* The End
+
+* Questions?
+.html assets/questions.html
+
+
+* It's not really a joke
+
+The actual output part is not very hard. Raw string literals and `"%#v"` make things pretty easy.
+
+A lot of popular packages that have code generation features simply use templates or plain old `fmt`:
+
+.link https://github.com/jteeuwen/go-bindata
+.link https://github.com/clipperhouse/gen
+.link https://github.com/golang/mock
+.link https://github.com/pquerna/ffjson
+.link https://github.com/golang/tools/tree/master/cmd/stringer
+
+
+* Using go/printer
+
+It is sufficiently more complex than using `fmt` and `text/template`
+
+It is generally better for creating tools that modify existing code (like `goimports`), but that is not a rule
+
+
+* The Hard Part
+
+* MVP
+
+Figuring out what to generate is a more difficult.
+
+For simple tasks you could use command line flags or a config file as your input
+
+You could can actually get pretty far with this approach
+
+
+* The Fun Part
+
+Make your program inspect existing code
+
+Prevent users from needing to maintain extra files
+
+You can look for special comments like this
+
+  // +gen slice:"Where,Count,GroupBy[string]"
+
+This brings human and computer written code together
+
+
+* Focus for this talk
+
+We are going to generate getters for an existing struct type
+
+Code generation is powerful, and this is only a narrow use case for it
+
+.code user/user.go
+
+
+* Inspecting Existing Code
+
+* Using go/{ast,parser,token}
+
+Go provides an awesome set of libraries for inspecting Go source code
+
+These packages can answer questions like:
+
+- What are all of the names of interfaces in this package?
+- What packages are imported by this file?
+- *Which*declarations*in*this*file*have*a*particular*comment*above*them?*
+- What are the names of the fields on this struct?
+
+
+* When go/{ast,parser,token} isn't enough
+
+These packages fall short when you want to ask questions like:
+
+- Does this type implement that interface?
+- What types does this function take and return?
+- *What*are*the*types*of*every*field*on*this*struct?*
+
+
+* There is a theme here...
+
+The go/{ast,parser,token} packages do not give you access to Go's type system
+
+You can only get information about the _names_ of types in a source file
+
+To ask questions about types, you must re-invent the wheel
+(you will do a bad job)
+
+There has to be a better way!
+
+
+* Reflection!
+
+* Yin and Yang
+
+We can now ask questions about actual Go types
+
+The questions that we can't answer with the AST, we can answer with reflection, and vice versa
+
+We now all of the tools that we need to start inspecting source code
+
+
+* Bad timing
+
+Actually, not quite
+
+The `reflect` package only operates on values created at runtime
+
+In order to use reflection on a package, our program must have imported it at compile time
+
+
+* MacGyver
+
+What if our program created another program that imported the package we want to look at? (woah)
+
+- Generate a program that does the reflection that we need
+
+- Communicate its findings over stdout
+
+- Generate the actual code that we are interested in
+
+
+* Totally a thing
+
+As hacky as this sounds, a some of the programs listed before do exactly this
+
+It is a bit of work to pull off, but it does work
+
+Reflecting on main packages and test files complicates this process
+
+We now have to deal with IPC, just to look at some source code
+
+
+* There has to be a better way!
+
+.image assets/taco.gif
+
+
+* go/types
+
+* The missing link
+
+Allows us to take source code, and ask it questions about types
+
+No IPC
+
+No re-inventing the wheel
+
+
+* And...
+
+"Measured by lines of code and by API surface area, it is one of the most complex packages in Go's standard library"
+
+.link https://github.com/golang/example/tree/master/gotypes
+
+
+* Fear not
+
+The docs are awesome
+
+We only need to use a small subset of the API
+
+
+* Plan of attack
+
+* Overview
+
+- Parse the file
+- Find the comment
+- Find the struct
+- Get a list of fields and their types
+- Use templates to dump out the code
+
+
+* What we're dealing with
+
+.code fixture/structs.go
+
+
+* Parse the file
+
+.code codegen.go /parse START OMIT$/,/parse END OMIT$/
+
+
+* Iterate over each top level declaration
+
+.code codegen.go /collect getters START OMIT$/,/collect getters END OMIT$/
+
+.code codegen.go /find genDecl START OMIT$/,/find genDecl END OMIT/
+
+
+* Check for our special comment
+
+.code codegen.go /check comment START OMIT$/,/check comment END OMIT$/
+
+.code codegen.go /^func hasComment/,/^}/
+
+
+* Make sure we have a struct declaration
+
+.code codegen.go /struct decl START OMIT$/,/struct decl END OMIT/
+
+
+* Collect all fields from struct
+
+.code codegen.go /collect fields START OMIT$/,/collect fields END OMIT/
+
+
+* Generate code and format it
+
+.code codegen.go /output fmt START OMIT$/,/output fmt END OMIT$/
+
+
+* The template used to generate the code
+
+.code codegen.go /template START OMIT$/,/template END OMIT/
+
+
+* Data and helpers for the template
+
+.code codegen.go /template data START OMIT$/,/template data END OMIT/
+
+
+* The real deal
+
+.play codegen.go /^package main/,/^}/
+
+
+* Nitpicks for inspiration
+
+* Parsing a proper go package instead of a file
+
+Our program only parses a single go file
+
+`go/parser.ParseDir` can read an entire an package
+
+`go/build` can be used to resolve a package name to a set of files
+
+
+* Handling comments better
+
+Right now we require `+getters` to be in the doc comment, which sucks
+
+This doesn't work
+
+.code fixture/ignored.go
+
+`go/ast.CommentGroup` can pull these comments together
+
+
+* Parenthesized type declarations
+
+Our code doesn't like parenthesized type declarations
+
+.code fixture/parens.go
+
+`go/ast.NotBeingSoLazy` can help with this
+
+
+* Pulling in needed imports
+
+Imports from other packages break our program
+
+We could run our code through `goimports` if we were super lazy
+
+`go/types.Object` and `go/types.Package` can be used to get information on imports
+
+_Probably_a_lot_more_...
+
+
+* Closing thoughts
+
+* Closing thoughts
+
+Code generation is not a new idea, but there is still much to explore
+
+It complements Go's restrictive type system nicely
+
+You don't have to parse existing code to make useful tools
+
+Don't forget to commit your generated code, so that `go` `get` still works
