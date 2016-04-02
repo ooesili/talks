@@ -6,7 +6,7 @@ run: build
 build: codegen
 
 codegen: *.go
-	go build -o codegen
+	go build
 
 clean:
 	rm -f codegen
